@@ -257,4 +257,70 @@
     )
 )
 
+;; =========================================================================
+;; NEW FEATURE: ORACLE SLASHING MECHANISM (25+ Lines)
+;; =========================================================================
+;; @desc This newly added feature provides economic security against malicious
+;; or faulty Neural Networks. If an Oracle submits a provably malicious trade
+;; (e.g., front-running, extreme slippage parameters meant to drain liquidity),
+;; the Admin can dispute the action.
+;; 
+;; This function will:
+;; 1. Verify the caller is the Admin.
+;; 2. Instantly revoke the Oracle's authorization.
+;; 3. Confiscate (slash) their entire STX stake.
+;; 4. Transfer the slashed STX to the DAO Treasury address.
+;; 5. Emit a permanent slash event on-chain for auditing.
+;; 
+;; @param malicious-oracle; The principal of the offending Oracle.
+;; @param reason-code; An identifier for the type of malicious activity.
+(define-public (report-malicious-oracle (malicious-oracle principal) (reason-code uint))
+    (let
+        (
+            ;; Retrieve the current stake of the malicious oracle
+            (confiscated-amount (default-to u0 (map-get? oracle-stakes malicious-oracle)))
+            (treasury (var-get treasury-address))
+        )
+        ;; Security Check: Only the Admin/Owner can execute a slash
+        (asserts! (is-owner tx-sender) err-unauthorized)
+        
+        ;; Ensure the oracle actually has a stake to slash, or is authorized
+        ;; Even if stake is 0, we still want to revoke and ban them.
+        
+        ;; Step 1: Revoke Authorization immediately
+        (map-delete authorized-oracles malicious-oracle)
+        
+        ;; Step 2: Zero out their stake in the ledger
+        (map-set oracle-stakes malicious-oracle u0)
+        
+        ;; Step 3: If they had a stake, transfer the locked STX to the treasury
+        (if (> confiscated-amount u0)
+            (begin
+                ;; Transfer from contract to treasury
+                (try! (as-contract (stx-transfer? confiscated-amount tx-sender treasury)))
+                
+                ;; Emit a detailed slash event
+                (print {
+                    event: "ORACLE_SLASHED",
+                    oracle: malicious-oracle,
+                    slashed-amount: confiscated-amount,
+                    reason: reason-code,
+                    treasury: treasury
+                })
+                (ok confiscated-amount)
+            )
+            (begin
+                ;; Emit event even if no funds were slashed
+                (print {
+                    event: "ORACLE_BANNED",
+                    oracle: malicious-oracle,
+                    slashed-amount: u0,
+                    reason: reason-code
+                })
+                (ok u0)
+            )
+        )
+    )
+)
+
 
